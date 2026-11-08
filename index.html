@@ -417,17 +417,39 @@ function loadVoices() {
   voice = vs.find(v => /en[-_]GB/i.test(v.lang)) || vs.find(v => /^en/i.test(v.lang)) || null;
 }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+let lastUtterance = null;                    // keep a reference: some browsers drop utterances that get garbage-collected
 function say(text) {
   if (!soundOn || !text || !('speechSynthesis' in window)) return;
-  speechSynthesis.cancel();
+  if (!voice) loadVoices();
+  if (speechSynthesis.speaking || speechSynthesis.pending) speechSynthesis.cancel();
   const u = new SpeechSynthesisUtterance(text);
   u.lang = 'en-GB'; if (voice) u.voice = voice; u.rate = .82; u.pitch = 1.1;
+  lastUtterance = u;
   speechSynthesis.speak(u);
+  if (speechSynthesis.paused) speechSynthesis.resume();
 }
+/* iPhone/iPad (Safari and Chrome on iOS) allow sound only after it was started inside a tap.
+   On the first touch play a silent sound and a silent utterance; later speech and beeps then work. */
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+    const src = actx.createBufferSource();
+    src.buffer = actx.createBuffer(1, 1, 22050); src.connect(actx.destination); src.start(0);
+  } catch (e) {}
+  try {
+    if ('speechSynthesis' in window) { const u = new SpeechSynthesisUtterance(' '); u.volume = 0; lastUtterance = u; speechSynthesis.speak(u); }
+  } catch (e) {}
+}
+['touchend', 'pointerup', 'keydown'].forEach(ev => document.addEventListener(ev, unlockAudio, { capture: true, passive: true }));
 function tone(freqs, dur = .11, type = 'sine', vol = .18) {
   if (!soundOn) return;
   try {
     actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
     freqs.forEach((f, i) => {
       const o = actx.createOscillator(), g = actx.createGain(), t = actx.currentTime + i * dur;
       o.type = type; o.frequency.value = f;
@@ -586,7 +608,8 @@ function showHome() {
          <div class="stars3">${[1, 2, 3].map(s => star((best[l.id] || 0) >= s)).join('')}</div></button>`).join('')}</div>
        <button class="testbtn" data-level="test">${icon('rocket', C.orange)}<div><b>Test Flight</b><span>Próbny sprawdzian: 15 pytań ze wszystkiego, bez podpowiedzi.</span></div>
          <div class="best">${best.test != null ? `Rekord: ${best.test}/15` : ''}</div></button>
-       <div class="foot">Dla rodzica: Robo czyta słowa po angielsku (głos przeglądarki – najlepiej Edge lub Chrome; przycisk 🔊 powtarza).
+       <div class="foot">Dla rodzica: Robo czyta słowa po angielsku (głos przeglądarki; przycisk 🔊 powtarza).
+         Na iPhonie: wyłącz tryb cichy (przełącznik z boku telefonu), podgłośnij i dotknij planety – dźwięk włącza się po pierwszym dotknięciu.
          Gwiazdki: ★★★ bez pomyłki, ★★ 1–2 pomyłki, ★ za ukończenie. Postęp zapisuje się w tej przeglądarce.
          <button data-act="reset">Wyzeruj postęp</button></div>`;
 }
